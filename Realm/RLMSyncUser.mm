@@ -178,6 +178,13 @@ using namespace realm;
     return [RLMRealm realmWithConfiguration:[RLMRealmConfiguration permissionConfigurationForUser:self] error:error];
 }
 
+- (BOOL)isAdmin {
+    if (!_user) {
+        return NO;
+    }
+    return _user->is_admin();
+}
+
 #pragma mark - Private API
 
 - (void)_unregisterRefreshHandleForURLPath:(NSString *)path {
@@ -256,6 +263,7 @@ using namespace realm;
                                                     userInfo:nil]);
                     return;
                 }
+                sync_user->update_admin_status(model.refreshToken.tokenData.isAdmin);
                 user->_user = sync_user;
                 completion(user, nil);
             }
