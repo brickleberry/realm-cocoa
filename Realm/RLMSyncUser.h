@@ -18,7 +18,7 @@
 
 #import <Foundation/Foundation.h>
 
-@class RLMSyncUser, RLMSyncCredentials, RLMSyncSession, RLMRealm;
+@class RLMSyncUser, RLMSyncCredentials, RLMSyncPermissionValue, RLMSyncSession, RLMRealm;
 
 /**
  The state of the user object.
@@ -34,6 +34,11 @@ typedef NS_ENUM(NSUInteger, RLMSyncUserState) {
 
 /// A block type used for APIs which asynchronously vend an `RLMSyncUser`.
 typedef void(^RLMUserCompletionBlock)(RLMSyncUser * _Nullable, NSError * _Nullable);
+
+/// A block type used to report the progress of a permissions operation.
+/// If the `NSError` argument is nil, the operation succeeded.
+typedef void(^RLMPermissionsStatusBlock)(NSError * _Nullable);
+
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -74,6 +79,8 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @property (nonatomic, readonly) RLMSyncUserState state;
 
+#pragma mark - Lifecycle
+
 /**
  Create, log in, and asynchronously return a new user object, specifying a custom timeout for the network request.
  Credentials identifying the user must be passed in. The user becomes available in the completion block, at which point
@@ -102,6 +109,8 @@ NS_SWIFT_UNAVAILABLE("Use the full version of this API.");
  */
 - (void)logOut;
 
+#pragma mark - Sessions
+
 /**
  Retrieve a valid session object belonging to this user for a given URL, or `nil` if no such object exists.
  */
@@ -111,6 +120,14 @@ NS_SWIFT_UNAVAILABLE("Use the full version of this API.");
  Retrieve all the valid sessions belonging to this user.
  */
 - (NSArray<RLMSyncSession *> *)allSessions;
+
+#pragma mark - Permissions
+
+- (void)applyPermission:(RLMSyncPermissionValue *)permission callback:(RLMPermissionsStatusBlock)callback;
+
+- (void)revokePermission:(RLMSyncPermissionValue *)permission callback:(RLMPermissionsStatusBlock)callback;
+
+#pragma mark - Permissions (old)
 
 /**
  Returns an instance of the Management Realm owned by the user.
@@ -127,6 +144,8 @@ NS_SWIFT_UNAVAILABLE("Use the full version of this API.");
  synchronized Realms and permission details this user has access to.
  */
 - (RLMRealm *)permissionRealmWithError:(NSError **)error NS_REFINED_FOR_SWIFT;
+
+#pragma mark - Miscellaneous
 
 /// :nodoc:
 - (instancetype)init __attribute__((unavailable("RLMSyncUser cannot be created directly")));

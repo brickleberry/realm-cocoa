@@ -20,7 +20,10 @@
 
 #import "RLMAuthResponseModel.h"
 #import "RLMNetworkClient.h"
+#import "RLMRealmConfiguration+Sync.h"
+#import "RLMRealmConfiguration_Private.hpp"
 #import "RLMSyncManager_Private.h"
+#import "RLMSyncPermissions_Private.hpp"
 #import "RLMSyncSession_Private.hpp"
 #import "RLMSyncSessionRefreshHandle.hpp"
 #import "RLMTokenModels.h"
@@ -31,9 +34,43 @@
 #import "sync/sync_user.hpp"
 
 using namespace realm;
+using ConfigMaker = std::function<Realm::Config(std::shared_ptr<SyncUser>&, std::string)>;
+using PermissionChangeCallback = std::function<void(std::exception_ptr)>;
+
+namespace {
+
+PermissionChangeCallback wrap_callback(RLMPermissionsStatusBlock callback)
+{
+    return [callback](std::exception_ptr ptr) {
+        if (ptr) {
+            NSError *error = nil;
+            try {
+                std::rethrow_exception(ptr);
+            } catch (PermissionChangeException const& ex) {
+                // TODO: don't hardcode the user info keys
+                error = [NSError errorWithDomain:RLMSyncErrorDomain
+                                            code:RLMSyncErrorPermissionChangeError
+                                        userInfo:@{@"description": @(ex.what()),
+                                                   @"code": @(ex.code)}];
+            }
+            catch (const std::exception &exp) {
+                RLMSetErrorOrThrow(RLMMakeError(RLMErrorFail, exp), &error);
+            }
+            REALM_ASSERT(error);
+            callback(error);
+        } else {
+            // Finished successfully
+            callback(nil);
+        }
+    };
+}
+
+}
 
 @interface RLMSyncUser () {
     std::shared_ptr<SyncUser> _user;
+    // FIXME: remove this when the object store ConfigMaker goes away
+    std::unique_ptr<ConfigMaker> _configMaker;
 }
 
 - (instancetype)initWithAuthServer:(nullable NSURL *)authServer NS_DESIGNATED_INITIALIZER;
@@ -73,6 +110,13 @@ using namespace realm;
     if (self = [super init]) {
         self.authenticationServer = authServer;
         self.refreshHandles = [NSMutableDictionary dictionary];
+        _configMaker = std::make_unique<ConfigMaker>([](std::shared_ptr<SyncUser>& user, std::string url) {
+            RLMRealmConfiguration *config = [[RLMRealmConfiguration defaultConfiguration] copy];
+            NSURL *objCUrl = [NSURL URLWithString:@(url.c_str())];
+            RLMSyncUser *objCUser = [[RLMSyncUser alloc] initWithSyncUser:user];
+            config.syncConfiguration = [[RLMSyncConfiguration alloc] initWithUser:objCUser realmURL:objCUrl];
+            return [config config];
+        });
         return self;
     }
     return nil;
@@ -176,6 +220,36 @@ using namespace realm;
 
 - (RLMRealm *)permissionRealmWithError:(NSError **)error {
     return [RLMRealm realmWithConfiguration:[RLMRealmConfiguration permissionConfigurationForUser:self] error:error];
+}
+
+#pragma mark - Permissions API
+
+- (void)applyPermission:(RLMSyncPermissionValue *)permission callback:(RLMPermissionsStatusBlock)callback {
+    if (!_user || _user->state() == SyncUser::State::Error) {
+        // TODO: improve the error
+        callback([NSError errorWithDomain:RLMSyncErrorDomain
+                                     code:RLMSyncErrorPermissionChangeError
+                                 userInfo:@{@"description": @"Permissions cannot be applied using an invalid user."}]);
+        return;
+    }
+    Permissions::set_permission(_user,
+                                [permission rawPermission],
+                                wrap_callback(callback),
+                                *_configMaker);
+}
+
+- (void)revokePermission:(RLMSyncPermissionValue *)permission callback:(RLMPermissionsStatusBlock)callback {
+    if (!_user || _user->state() == SyncUser::State::Error) {
+        // TODO: improve the error
+        callback([NSError errorWithDomain:RLMSyncErrorDomain
+                                     code:RLMSyncErrorPermissionChangeError
+                                 userInfo:@{@"description": @"Permissions cannot be revoked using an invalid user."}]);
+        return;
+    }
+    Permissions::delete_permission(_user,
+                                   [permission rawPermission],
+                                   wrap_callback(callback),
+                                   *_configMaker);
 }
 
 #pragma mark - Private API
